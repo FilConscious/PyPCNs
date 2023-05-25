@@ -5,4 +5,4 @@
 
 *  PyPCNs
 
-Predictive coding networks dealing with different tasks and datasets. For more info consult the [[id:a39624fb-dacc-4ae9-8a13-c36d9cb0b646][documentation]].
+Predictive coding networks dealing with different tasks and datasets. For more info consult the [[file:docs/pypcns-docs.org][documentation]]..
