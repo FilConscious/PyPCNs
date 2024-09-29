@@ -457,6 +457,7 @@ class PcnPreds(nn.Module):
         self.batch_size = batch_size
         self.act_units = torch.empty((size, self.batch_size))
         self.fix_activity = (fix_activity, mode)
+        self.mode = mode
 
         self.activations = nn.ModuleDict(
             {
@@ -515,7 +516,7 @@ class PcnPreds(nn.Module):
     def set_units(self, input):
         """Method to feed observations/datapoints to bottom units or to set priors for top layer."""
 
-        if self.fix_activity == True:
+        if self.fix_activity == True and self.mode != "supervised":
             # Checking if self.units is a tensor of parameters
             # NOTE: e.g., deals with the case of a top prior used at test time after unsupervised training
             if self.units in self.parameters():

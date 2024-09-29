@@ -1,0 +1,385 @@
+:PROPERTIES:
+:CATEGORY: notebook
+:END:
+#+STARTUP: overview indent
+
+
+* Project logs
+
+** 2022-11-28 Ready to run PCN with MNIST dataset
+
+python -m scripts.tsk4_dist_dS.main -dsn mnist -bs 64 64 -dimp 784 -dimt 0 -nitr 1 -sd 3 -ly 784 1024 10 -af sigmoid -linf 13 -lr 0.0349586720753856 -dt 0.01
+
+python -m scripts.tsk4_dist_dS.visualize -eid learning_rate
+** 2022-12-01 Basic training and testing work
+
+PCN seems to be working with MNIST as well; in a small 10-batch test free energy decreases as expected.
+
+After trying to run the full training and testing, I found that there were two problems:
+
+- saving the updated weights at each epoch is too taxing for the computer RAM and leads to a frozen system, if you want to monitor the weights over training you should try to save them at longer intervals
+- the testing function is feed the wrong ~num_batch~ which prevents testing from ending without errors
+** 2022-12-02 Full training and testing
+
+Trying a full training and testing after fixing the bugs from yesterday. The command used was:
+
+~python -m scripts.tsk4_dist_dS.main -dsn mnist -bs 64 64 -dimp 784 -dimt 0 -nitr 1 -sd 3 -ly 784 1024 10 -af sigmoid -linf 13 -lr 0.0349586720753856 -dt 0.01~
+
+A few observations:
+
+- this does not seem a good choice of hyperparameters as the free energy oscillates a lot during training and the PCN does not seem to be able to minimize it effectively
+- the learning rate (\(0.03\)) might be too high
+** 2022-12-03 Blurry reconstructions
+
+I ran the code using the following command, where the difference from yesterday is a much smaller learning rate (\(0.001\)):
+
+~python -m scripts.tsk4_dist_dS.main -dsn mnist -bs 64 64 -dimp 784 -dimt 0 -nitr 1 -ly 784 512 256 128 10 -af sigmoid -linf 13 -lr 0.001 -dt 0.01~
+
+A few observations:
+
+- overall, the PCN manages to minimize free energy much better than with previous learning rates
+- however, the quality of the reconstructed images (predictions to bottom layer at test time) is quite poor, regardless of the digit the PCN seem to consistently output the same blurry blob
+- increasing the parameter ~-linf~ to \(100\) (number of inferential cycle per datapoint) did not help
+
+After looking at the findings in one of the first papers by Millidge, I decided to scale everything down, meaning: using ~-ly 784 20~, a single layer PCN without any non-linearity (no sigmoidal activation or the like on top layer, this was removed in a earlier experiment because it did not seem to help). The number of inferential cycles was also kept at 100 or above and the integration step brought to \(0.05\).
+
+The first command was:
+
+~python -m scripts.tsk4_dist_dS.main -dsn mnist -bs 64 64 -dimp 784 -dimt 0 -nitr 1 -ly 784 20 -af sigmoid -linf 100 -lr 0.01 -dt 0.01~
+
+A few observations:
+
+- the results were significantly better, and they further improved when ~-linf~ was set to \(200\) and ~-dt~ to \(0.05\)
+- by results we mean: better free energy minimization, better reconstructed images, and better groupings among latent units' activities based on input label
+- can the same hyperparameters changes improve the original network with the sigmoidal activations?
+- or is it a problem with the sigmoidal activation (either my implementation of it or the function itself)?
+
+** 2022-12-04 Non-linearities
+
+Adding another (hidden) linear layer to the network gave similar results, using the arguments:
+
+~python -m scripts.tsk4_dist_dS.main -dsn mnist -bs 64 64 -dimp 784 -dimt 0 -nitr 1 -ly 784 512 20 -af linear -linf 200 -lr 0.01 -dt 0.05~
+
+Further tests revealed that non-linear activation functions seem to degrade network's performance. It is not clear whether this stems from poor parameters choice, weight initialization, bugs in the PCN implementation, or the fact itself of using non-linearities.
+
+** 2022-12-09 Non-linearities and Gaussian distributions
+
+While reading the introduction of [[cite:&Pinchetti2022]], I might have found the answer to why the performance degrades with non-linear activation functions. From the paper: \ldquo{}We empirically show that standard PC is ineffective in training models /with complex structure and activation functions, as they cannot be approximated by a Gaussian generative model/\rdquo (p. 2, with my emphasis).
+
+** 2022-12-11 The importance of parameters' initialization
+
+Over the weekend I managed to find the (hopefully) last bugs in my PCN implementation. This was possible thanks to the addition of the Pytorch abstraction layer when it comes to computing and backpropagating gradients. It turned out that the Pytorch implementation was performing significantly better than my original one, even if in my mind they were supposed to do the same thing. Let's break down all the findings (more or less in chronological order):
+
+1. thanks to a warning from the Pytorch autograd (about some leafs being changed in place), I realized that the inferential cycle in the original implementation was not entirely correct or, at the very least, was not doing what I thought it was doing; more in detail, with the inferential loop starting from the bottom layer, the units activities at every layer were being updated immediately (when at that layer in the loop); one consequence of this is that when you are at layer \(l + 1\) the predictions going down give rise to prediction error based on the updated activity at \(l\), that was not the prediction error used for the units' update at layer \(l\); it is not entirely clear whether doing things this way represents a general problem for the network performance, but:
+
+   - it is a problem when you implement things with automatic differentiation because the units at \(l\) that gave rise to a certain prediction error at layer \(l - 1\) are changed in the meantime, resulting in an error when computing the corresponding gradient for their update (which is done then the for loop has ended)
+
+   - further, it might not be desirable if one wants a network where all the layers /simultaneously/ send down their prediction and corresponding prediction errors are computed, what you did originally looks more like breaking an inferential step into further micro time-step in which things happens at a single layer only
+
+2. I found that =self.activ_units= was storing the activated units for all the steps in the inferential cycle, this was causing a problem at the end when it was time to update the weights gradients (to be used for learning at the end of the batch) because that list was accessed with the wrong index (assuming that just the activation units of the last inferential cycle were being stored)
+
+3. after fixing the previous two points the divergence in performance between the two implementations was still considerable, that is when I realized that in the original implementation I was taking a much smaller gradient descent step because the accumulated gradients were being averaged based on batch size; removing the averaging and reducing the learning rate seems to have improved the performance further in the original implementation
+
+4. in the end, this might be what made the largest difference: parameters initialization in the original implementation was different compared to the Pytorch one; I implemented Xavier initialization with a wrong upper bound (taken from the wrong source?) and I did not use a gain based on the activation function; both fixes improved the performance further
+
+Quantitatively, the original implementaion can now reach a training FE loss of \(\approx 23\) compared to the \(\approx 15\) of the Pytorch one. So, there is still a difference that manifests itself more clearly when you look at the top units and plot a subset of them based on image category: whereas in the Pytorch implementation you can start to see clearly meaningful groupings, in the original implementation that is not the case (this is even without using PCA or other dimensionality reduction techniques).
+
+So I am left with the question of whether that performance gap is responsible for the absence of this rudimental \ldquo{}disentanglement\rdquo or there is something else going on. In other words, I am left with the doubt that the automatic differentiation black box might be doing something nice that boost performance futher (or again to make that work I slightly changed something). There is also the possibility that /by chance/ the initialization in one case is advantageous and that averaging over more than one run would give similar results or that a hyperparameters search might actually yield better parameters (different depending on implemetation).
+
+An additional run with a slightly higher integration step partially removes some of the doubts: the network even surpassed the Pytorch implementation when it comes to training loss and the groupings are now visible. *So it becomes apparent that parameters initialization and hyperparameter search matter a lot!*
+
+Finally, there is the *important discovery*:
+
+- the first Pytorch implementaion overlooked the fact that the first element in =self.pred_units= was the input /data/ (the image) which should have remained fixed during the inferential cycle so /those/ units were also being updated based on the corresponding prediction error
+- surprisingly that boosted the network performance and achieves the lowest minimum among all networks considered so far
+- after some investigation, this might be the reason:
+
+  1. normally, the network is trying to predict the value of all the pixels in the image, some of those are simply \(0\) so the network has to silence those units that issue predictions different from zero in the wrong place
+  2. however, with the above mistake, the initial errors /change/ the input units so all those zeros become active, similarly for the pixels that actually contain useful information
+  3. surprisingly enough this works in the sense that the network manages to minimize the /loss/ and reconstruct images that makes sense (even if slightly more noisy from our perspective)
+
+This discovery requires further investigation \dots
+
+** 2022-12-12 Loose gradients with Pytorch optimizers
+
+I added a further layer of abstraction by making use of an outer and inner Pytorch optimizer to update weight and predictive units respectively. Unfortunately, things did not work the same as with the manual gradient updates. I spent hours trying to figure out what was happening. In the process, let me jot down a couple of observations:
+
+- there is the question of how to implement the SGD udpate: should the optimization step be after every datapoint or after every (mini)-batch?
+- as a matter of fact, when I switched to the former things started to work again
+
+Having said this, the culprit was probably some loose gradient quantity that was not zeroed by =opt.zero_grad= at the end of each inferential cycle and for which =pcn.zero_grad= was required (which was effectively used in the manual gradient update). I wonder what that is \dots
+
+My guess is that the gradient in question is of the weights and that may be picked up by the /outer optimizer/ when updating the weights at the end of the mini-batch. In fact, I noticed that between the two approaches (manual and automatic) there were /different/ weights at the beginning of epoch \(1\), implying a different weight update. By zeroing the gradients of all model's parameters, the reuse of that leftover gradient is averted. Also, this explanation is consistent with the observation that using the outer optimizer for the weight update after every datapoint did not make things go awry; mind you, the leftover gradient would be still present but have lower impact than after a full batch of datapoints.
+
+*The general lesson here might be that Pytorch optimizer class zeroes only the parameters that are fed into the optimizer and not all the parameters of the model (this is relevant for PCNs)*.
+
+** 2022-12-14 Nice modular implementation seems to work fine
+
+In around two days, I rewrote the Pytorch implementation of the PCN in a more modular Pytorch-style fashion. After going through the to-be-expected series of bugs, the code seems to work all right and give me a performance comparable to the original code.
+
+More testing is required to make sure that everything works fine. Then the last few tasks would be to implement properly the supervised training mode and plotting, the save/load model function, and general refinements of the infrastructure files.
+
+But ask yourself what the goal is:
+
+- do we want to test disentanglement?
+- do we want to explore further the input change case at training time?
+- do we want to test the information bottleneck idea?
+
+All of these question while time is running out and you should prioritize writing. Period.
+
+** 2022-12-17 Fixing a few bugs
+
+Found a recurrent problem asking for the usual solution.
+
+When you store/log tensors or arrays of data you need to /make a copy/ of them otherwise the data you wanted to store may be overwritten as the training/testing proceeds and new data comes in.
+
+It happened with the top units activities stored in a corresponding /attribute/ of every predictive module. If you just return that attribute, it will be overwritten at the next inferential cycle. So you need to use the clone method as follows:
+
+#+BEGIN_SRC python
+log.log_topl(l_tpu.detach().clone().numpy(), l_tau.detach().numpy(), test=True)
+#+END_SRC
+
+Note that detach alone does not work (see documentation) and for l_tau we do not do it because that is a new tensor created every time (as far as I remember).
+
+** 2022-12-22 Ready to try supervised mode
+
+*** 16:35 :: Ready to start training
+
+The PCN can now be trained in supervised mode, e.g.\space to predict the label of a MNIST image. There are three options related to the nature of the units in the input layer:
+
+1. they could be parameters so they would be subject to updates during inference
+2. or not, so their activity would be fixed to the input data
+
+This translates into two different and meaningful ways of training and testing:
+
+1. during training and testing the input units are fixed
+2. during training the units are fixed wheareas during testing (when no bottom input is given to the network) they are updated
+
+In both cases, we are generally interested in examining the predictions the PCN ends up making about the input layer, hoping to see that the units with highest predictions is the one that corresponds to the right label for the given image. Let's find out if that is indeed the case for both options.
+
+*** 21:13 :: A couple of problems
+
+First, training using the command line below is not working as the loss tends to increase after a certain number of epochs.
+
+=python -m scripts.tsk7_tm_sup.main -dsn mnist -bs 64 64 -nbs 100 -dimp 10 -dimt 0 -nitr 1 -ly 10 512 784 -af tanh -linf 50 -lr 0.001 -dt 0.01 -md supervised=
+
+I thought that one reason for that might be the top-layer units being fixed with an input that is zero almost everywhere. One fix would be to let those units free to be updated during inference, another one to add some noise to the input (say, the MNIST image) received by the top layer. So far, I have tried the latter and seems to help.
+
+However, I was then blocked by the second problem: during testing the computer RAM fills up pretty quickly if the batches have a lot of datapoints so there must be some cache of something that should be discarded instead. Need to investigate \dots
+
+*** 21:34 :: Found the culprit
+
+Since during training the RAM overload was not happening, I compared line by line the training and testing scripts. It turns out that in the latter there was no call to =pcn.reset()=, which is used to reset the network attribute storing the batch total loss. I wonder how that could be taxing on the RAM since I use =pcn.zero_grad()= in appropriate places; it might be that Pytorch was storing the computational graph connected with that loss at every batch since no outer optimizer is used at test time.
+
+** 2022-12-23 More random bugs
+
+*** 17:50 :: Low Test Classification Accuracy
+
+After some testing of the supervised mode, here are some observations (in chronological order):
+
+1. realized that a learning rate of \(0.001\) was to high and causing the loss to diverge (much better with \(0.0001\))
+
+2. before I came to the conclusion of (1) I thought it might be a good idea to add some Gaussian noise to the top units in the network since they are mainly zeros, it was a bad idea insofar as it was corrupting the top input a lot (this was confirmed by the fact that doing training with pure noise at the top was giving the same results)
+
+3. generally, the performance at test time was really poor (almost random chance), while investigating this I found that in the test script the method =pcn.preds_init= was called /after/ feeding the input to the top layer effectively destroying such prior
+
+All in all, there is still some weird stuff going when I train with the following:
+
+
+and with the bottom layer and top layer fixed a training and with the bottom layer free at testing.
+
+Before describing the weird finding, let me spend two words on the motivation for this training and testing setup. I am following one of the experiments in [[cite:&Whittington2017]] (as opposed to those carried out by Paul) with the key difference that I am not using the fixed prediction assumption (and few minor preprocessing differences). So during training the network is seeing a pair of inputs, one is received as a top layer prior (the image) and one as a bottom layer observation. During testing the network receives only the top layer prior and zero bottom layer observation (an array of zeros or \(0.03\)). The hope would be that given the input the network is able to predict the right observation at the bottom.
+
+Now the strange-looking findings:
+
+- at training time the network does a good job at minimizing free energy
+
+- moreover after only one or two epochs the network achieves over \(90%\) accuracy
+
+- however, while the free energy remains low (at values achieved during training), the prediction accuracy is really low (almost random chance)
+
+Some considerations:
+
+- it may be that the network is overfitting
+
+- it might be that the network is just learning to squash the bottom input /regardless/ of the top level prior, this might explain why at test time the loss is still low
+
+- at test time the bottom units are free to vary (via the inner optimization loop), that means they are updated with the prediction error at the same layer, arguably this seems the natural setup for testing the PCN but it might be that numerous inference cycles deteriorate the right predictions here
+
+*** 22:08 :: Overfitting?
+
+I tried to find out how I could disrupt that near perfect classification accuracy at training time. I compared three networks with different number of inferential cycles and, indeed, reducing inference time affects noticibly classification accuracy. This seems to be evidence that such an incredible performance is indeed related to what happens during inference and not to a silly bug, e.g.\space manipulating the wrong tensor the wrong way.
+
+Could it be that the network is overfitting? That the learning rate or the number of inferential cycles is too high?
+
+** 2022-12-24 More experiments
+
+*** 18:37 :: 1000 inferential cycles at test time???
+
+No way I could get a better test accuracy with my setup. So, I tried to replicate the results of one the papers of Paul where he was training the PCN to infer the correct label at the top. So, I had to change a few things and use a different experimental setup.
+
+After looking at the paper for a while, I realized that he was getting the accuracy he was getting by training the PCN for about \(500\) batches of \(640\) datapoints each (no way!) and testing with \(1000\) inferential cycles per datapoint (!).
+
+Those are exorbitant numbers that at the moment I cannot use in my setup: for one thing training takes forever, for another I'm not sure the system RAM would cope (given how I implemented the metrics saving object).
+
+I tried with much fewer batches and datapoints per batches (\(100\) for both) and I got poor results comparable to my previous classification experiments. The notable difference is that now I got those poor results also for training.
+
+** 2022-12-25 CUDA implementation
+
+*** 09:53 :: Another bug
+
+CUDA implementation seems to be a bit quicker. I tested it with Paul's experimental setup. While doing that I discovered another issue (which I'm not sure if I had noticed it the other day): in that setup at training time the top layer units need to be /fixed/!
+
+*** 23:00 :: Seem all right but too slow
+
+The run was initiated with the following command:
+
+=python -m scripts.tsk8_tm_sup2.main -dsn mnist -bs 100 100 -nbs 100 100 -dimp 784 -dimt 0 -nitr 1 -ly 784 300 100 10 -af tanh -linf 50 -lr 0.001 -dt 0.025 -md supervised=
+
+and it took several hours. As you can see the network was given only one sixth of the entire MNIST dataset. The crucial feature of this run was that it used the Adam optimization algorithm and the optimization step occurred after every datapoint (as opposed to after a mini-batch).
+
+It took a very along time, however the results seem to be in line with those of Paul (if you consider a similiar run in one of its figures). By looking at that figure, I wonder how he could train the network for all those batches (for some runs even passing the entire training dataset multiple times). With my implementation it would take days. I'll have to ask him \dots
+
+While thinking about that, it came to my mind that maybe there was a way to vectorize the input and the subsequent prediction error minimization (maybe that is what he did, or maybe he used the DE solver, or maybe I'm still doing things in a convoluted way).
+
+** 2022-12-26 Vectorization!
+
+*** 21:28 :: First vectorization experiment
+
+Implemented the vectorized processing of the dataset, this way the PCN receives a (mini)-batch at once and does inference on it. The sensational result is that training and testing take a considerably shorter amount of time (around \(15\) minutes!) so this should allow me to try more things more quickly now.
+
+First of all, let's see if I get accuracies along the line of Paul's results. At the same, I need to find out if it is better to take the gradient step based on the mini-batch total free energy or its average.
+
+So far I have tried the former with the following instructions:
+
+=python -m scripts.tsk8_tm_sup2.main -dsn mnist -bs 60 60 -nbs 1000 150 -dimp 784 -dimt 0 -nitr 1 -ly 784 300 100 10 -af tanh -linf 50 -lr 0.001 -dt 0.01 -md supervised=
+
+and with a testing number of inferential cycles equal to \(50\). Admittedly, the results were not great as the network barely reached an accuracy of \(50%\) at test time. First, I want to check whether I can get good results with lower parameters compared to Paul's setup \dots
+
+** 2022-12-27 Some results are in!
+
+*** 08:18 :: The parameters seem to match
+
+For the PCN under consideration, to get good results I need to use the parameters used by Paul (this does not mean that there might be another /better/ combination of parameters that I have not tried).
+
+As to the question of whether it is better to take the gradient step based on mini-batch average or just the mini-batch loss, the answer is not clear cut.
+
+** 2023-01-08 Plotting of clusters from unsupervised data - done!
+
+*** 21:50 :: Clustering without PCA reveals entanglement?
+
+** 2023-01-14 Transversals
+
+*** Some errors with CUDA after update
+
+Error:
+
+/home/filconscious/miniconda3/envs/aifgym/lib/python3.10/site-packages/torch/cuda/__init__.py:88: UserWarning: CUDA initialization: Unexpected error from cudaGetDeviceCount(). Did you run some cuda functions before calling NumCudaDevices() that might have already set an error? Error 804: forward compatibility was attempted on non supported HW (Triggered internally at /opt/conda/conda-bld/pytorch_1666642969563/work/c10/cuda/CUDAFunctions.cpp:109.)
+  return torch._C._cuda_getDeviceCount() > 0
+
+*Solve* (from Stackeroverflow): just rebooted after I had updated the Nvidia drivers
+
+*** Error with loading saved weights
+
+If you saved the state dictionary of a PCN with certain layers and then define a new PCN with one or two layers not trainable then you have mismatch.
+
+So, you need to define the same PCN, load the weights, /then/ change the nature of some the layers \dots
+
+** 2023-01-15 Some errors
+
+*** An error with top supervision?
+
+Probably found an error in supervised mode with top labels: at test time the top layer is seemingly not changed into a layer that can be updated.
+
+However, it is weird because I recollect everything working and not seeing strange results in those experiments \dots
+
+*Resolved*: there was no error, just forgotten that we used =pcn_layer.set_units()= to change a layer of units into parameters and not =pcn_layer.fix_activity()=.
+
+*** An error with batch shuffling
+
+The trasversal plots were not correct because the datapoints were being shuffled.
+
+*Resolved*: now an argument is used to determine whether to shuffle or not.
+
+** 2023-03-26 Visualizing Transversals
+
+*** 8:30ish :: The Problem
+
+After more than two months (!), I have come back to this code to see if the transversal were revealing something or not. Unfortunately, after such a long time, I need some time to re-familiarize myself with the code.
+
+The transversals are plotted correctly (I think) but they look meaningless. This could be right, i.e., proving entanglement, but the first reconstruction at least should show a digit while instead it is just garbage. Also, I don't remember how batches of data are selected for the trasversals, so it strikes me as odd that always the same labels appear on the plots.
+
+To investigate, I will run an unsupervised experiment to see how the reconstructions look like now.
+
+*** 22:19 :: Getting closer to the solution?
+
+After some test, I think the root cause is likely related to the way the trasversal dataset is created or sampled during testing; could it be that some data loading procedure always load the same datapoints?
+
+TODO: print the dataset when it is created to see if all the top units are pulled in.
+
+** 2023-03-27 Fixing Visualization of Transversals
+
+*** 09:00 :: Found the problem: sampling error
+
+Indeed, the problem seems to be in the data loading/sampling procedure. Basically, at every epoch the dataloader returns always the same batch of data, i.e., the first one. Let's see how to fix that.
+
+*** 10:26 :: The sampler?
+
+After looking at the documentation for a while, I think it might be that when you define the Dataloader objects with =shuffle = false= you need to add a sampler to the definition.
+
+*** 10:48 :: At every epoch the iterator would be recreated
+
+The error was much worse: in the epoch for-loop I would call =iter(dataset)= meaning that at the beginning of every epoch the iterator over the data was re-initialized, with the consequence that the PCN would see always the same batch of data. To my dismay, the same error was present in the training scripts suggesting that previous results might be wrong.
+
+However, when the shuffle parameter is set to =True= it seems that the problem does not arise so it is not entirely clear whether the training was hampered or not.
+
+Ah, it turns out that when you are using an Iterable dataset that parameter should be set to =False=.
+
+So, I went back to the normal Dataset class and concluded that the =shuffle= parameter must be doing something with the data such that re-initializing =iter(dataset)= at the beginning of every epoch has no effect. I think =shuffle= might be creating an iterator already and that an iterator of an iterator does not affetc the =next()= method (tried with a simple sequence example). The problem arises when you set that parameter to =False=.
+
+At any rate, the correct implementation (I think) would be to have the iterator created /outside the for-loop/.
+
+TODO: do that for the training loop and ascertain whether you get different results.
+
+** 2023-04-10 Another Attempt with Transversals
+
+*** 15:40 :: Some observations
+
+In general, transversal plotting does not reveal anything interesting. The main disappointment relates to the fact that without providing some inputs the PCN is not able to recreate it starting from prior top level activity.
+
+That top-level activity is saved at test time when the PCN has converged and when the PCN has learned the \ldquo{}correct\rdquo weights. The idea was that taking that activity and fixing the top layer with it during another test (using the very same weights) should have allowed the network to recreate the original input. Once that is shown to be the case, one could have asked what the PCN would hallucinate if the value of some of those top level units were changed (transversal plotting).
+
+Two slightly different scenarios were considered: 1) training and testing the PCN with input layer activity fixed and 2) not fixed. The crucial difference here is that in the second case the bottom level error \ldquo{}acts\rdquo on the input units, changing their values so one gets predicted images that are more noisy.
+
+Now, the main observations are as follows:
+
+- in scenario 1) the PCN does not show any ability to reconstruct the original inputs and the transversals seemingly do not reveal anything clear-cut
+- in scenario 2) the situation seems to be a bit better insofar as the reconstructed images reveal slightly more defined shapes, but still far from a clear reconstruction of the original inputs
+- also plotting the transversal shows a more defined evolution of those rough shapes
+
+The puzzling question here is why the PCN is not able to reconstruct the original inputs once it is provided with the relevant prior activity (and the corresponding weights). After all, that should result in the same predictions to the second-last layer and, in turn, to the second-last layer to converge to the very same activity it had at test time when those top-level values were saved. Similarly, for all the layers below.
+
+One problem here might be represented by the input-level error which might affect negatively the update of each layer activity. Unfortunately, by using Torch optimizers I cannot distinguish between relevant and irrelevant errors so I cannot verify this in the current implementation. The relevant error here is that that brings some layer activity to the vale expected from above when the above layers have converged properly.
+
+One option to try is to discount heavily the input-level error in the hope that all the other layer will be constrained by the top-level priors.
+
+* Project notes
+
+Commands to execute the code:
+
+=python -m scripts.tsk6_torchm_dS.main -dsn mnist -bs 2 2 -nbs 2 -dimp 784 -dimt 0 -nitr 1 -ly 784 512 20 -af tanh -linf 50 -lr 0.001 -dt 0.01=
+
+python -m scripts.tsk4_dist_dS.visualize -eid learning_rate
+
+python -m scripts.tsk7_tm_sup.main -dsn mnist -bs 5 5 -nbs 3 -dimp 10 -dimt 0 -nitr 1 -ly 10 512 784 -af tanh -linf 25 -lr 0.001 -dt 0.01 -md supervised
+
+
+** Producing transversals given top units activities
+
+Command-line arguments for running the unsupervised experiment:
+
+python -m scripts.tsk8_tm_sup2.main -dsn MNIST -bs 60 60 -nbs 1000 150 -dimp 784 -dimt 0 -nitr 1 -ly 784 300 100 10 -af tanh -ic 50 200 -lr 0.001 -dt 0.0231 -md unsupervised
+
+Command-line arguments for testing the PCN and producing transversals:
+
+python -m scripts.tsk8_tm_sup2.main -dsn transversals -bs 60 60 -nbs 150 22 -dimp 784 -dimt 0 -nitr 1 -ly 784 300 100 10 -af tanh -ic 50 200 -lr 0.001 -dt 0.0231 -tpr -md unsupervised -num_trsl 10 -su 2 -prs ts -en exp_04.01.2023_21.57.52DSmnistAFtanhLIF50LR0.001IST0.02032MDunsupervisedSD3

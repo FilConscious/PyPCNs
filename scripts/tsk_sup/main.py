@@ -6,18 +6,19 @@ Created on Sat Mar 05 11:55:00 2022
 """
 
 # Standard libraries imports
-import argparse
-from datetime import datetime
-import json
 import os
 import sys
+import argparse
+import json
+from datetime import datetime
+from pathlib import Path
 
 # Custom packages/modules imports
-from scripts.tsk8_tm_sup2 import run
+from scripts.tsk_sup import run
 
 # Note: the above absolute import could be replaced by the *relative import* 'from .run import run_task' with,
 # the advantage of not having to write run.run_task(...) when using the function run_task from module run.py.
-print("In module tsk8_tm_sup2 sys.path[0], __package__ ==", sys.path[0], __package__)
+print("In module tsk_sup sys.path[0], __package__ ==", sys.path[0], __package__)
 
 
 def main():
@@ -41,7 +42,7 @@ def main():
         "-dsn",
         type=str,
         default="mnist",
-        help="choices: mnist, dSprites",
+        help="choices: MNIST, dSprites",
     )
     # batch size (training and test)
     parser.add_argument("--batch_size", "-bs", nargs="+", type=int, default=[64, 64])
@@ -103,7 +104,7 @@ def main():
     # Num transversals, for testing only
     parser.add_argument("--num_transversals", "-num_trsl", type=int, default=0)
     # Set units for visualizing transversals, for testing only
-    parser.add_argument("--set_units", "-su", type=int, default=2)
+    parser.add_argument("--set_units", "-su", type=int, default=0)
     # Run process(es)
     parser.add_argument(
         "--process", "-prs", type=str, default="trts", help="choices: tr, ts, trts"
@@ -121,6 +122,7 @@ def main():
     ###### 1. DIRECTORIES ######
 
     # main.py file directory
+    # curr_dir = Path.cwd()
     curr_dir = os.path.dirname(os.path.realpath(__file__))
 
     # Dataset directory

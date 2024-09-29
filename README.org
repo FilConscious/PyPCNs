@@ -5,4 +5,6 @@
 
 *  PyPCNs
 
-Predictive coding networks dealing with different tasks and datasets. For more info consult the [[file:docs/pypcns-docs.org][documentation]]..
+Predictive coding networks applied to different tasks and datasets. For some info and command line instructions see the [[file:docs/pypcns-nb.org][project logs]].
+
+!!!Note!!!: this is still work-in-progress, a more user-friendly introduction to the repo and instructions on how to run experiments will be published shortly in the repo docs.

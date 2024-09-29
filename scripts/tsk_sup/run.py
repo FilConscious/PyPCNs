@@ -19,8 +19,8 @@ import matplotlib.pyplot as plt
 
 # Custom packages/modules imports
 from pcns import tm_pcn2
-from scripts.tsk8_tm_sup2 import train
-from scripts.tsk8_tm_sup2 import test
+from scripts.tsk_sup import train
+from scripts.tsk_sup import test
 from utilities import dataset_wrp
 
 # Global variable
