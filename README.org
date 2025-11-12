@@ -5,6 +5,18 @@
 
 *  PyPCNs
 
-Predictive coding networks applied to different tasks and datasets. For some info and command line instructions see the [[file:docs/pypcns-nb.org][project logs]].
+This repo implements a predictive coding network that can be trained in a supervised or unsupervised way with the MNIST dataset.
 
-!!!Note!!!: this is still work-in-progress, a more user-friendly introduction to the repo and instructions on how to run experiments will be published shortly in the repo docs.
+To run a supervised experiment with the MNIST dataset:
+
+#+begin_src bash
+python -m scripts.tsk_sup.main -dsn mnist -bs 60 60 -nbs 1000 150 -dimp 784 -dimt 0 -nitr 1 -ly 784 300 100 10 -af tanh -ic 50 50 -lr 0.001 -dt 0.01 -md supervised -lbp top
+#+end_src
+
+To visualise results:
+
+#+begin_src bash
+python -m scripts.tsk_sup.visualize -eid learning_rate
+#+end_src
+
+*Note*: this is work that was carried out during my PhD to understand how predictive coding networks work in practice; the code would benefit from some kind of refactoring and a detailed documentation.

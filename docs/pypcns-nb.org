@@ -383,3 +383,9 @@ python -m scripts.tsk8_tm_sup2.main -dsn MNIST -bs 60 60 -nbs 1000 150 -dimp 784
 Command-line arguments for testing the PCN and producing transversals:
 
 python -m scripts.tsk8_tm_sup2.main -dsn transversals -bs 60 60 -nbs 150 22 -dimp 784 -dimt 0 -nitr 1 -ly 784 300 100 10 -af tanh -ic 50 200 -lr 0.001 -dt 0.0231 -tpr -md unsupervised -num_trsl 10 -su 2 -prs ts -en exp_04.01.2023_21.57.52DSmnistAFtanhLIF50LR0.001IST0.02032MDunsupervisedSD3
+
+
+python -m scripts.tsk_sup.main -dsn mnist -bs 60 60 -nbs 1000 150 -dimp 784 -dimt 0 -nitr 1 -ly 784 300 100 10 -af tanh -ic 50 50 -lr 0.001 -dt 0.01 -md supervised -lbp top
+
+python -m scripts.tsk_sup.visualize -eid learning_rate
+
